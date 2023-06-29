@@ -7,6 +7,7 @@ const {
   StringSelectMenuOptionBuilder,
   ComponentType,
 } = require("discord.js");
+const Quiz = require("../database/model").questions;
 const client = require("..");
 const { getOrdinal, getRandomColor } = require("../utils/helper");
 // const { allowedUsers } = require('../config.json');
@@ -62,7 +63,7 @@ client.on("interactionCreate", async (interaction) => {
         return;
       }
       // check the current testing member
-      if (currentTestingMember >= 1) {
+      if (currentTestingMember >= 10) {
         await interaction.reply({
           content: "The quiz is full! Please try again later.",
           ephemeral: true,
@@ -98,13 +99,20 @@ client.on("interactionCreate", async (interaction) => {
           let gotCorrectAnswer = false;
 
           for (let i = 0; i < 3; i++) {
+            const randomRecord = await Quiz.aggregate([
+              { $sample: { size: 1 } },
+            ]);
+
             gotCorrectAnswer = await runQuiz(
               i,
+              randomRecord[0],
               interaction,
               guild,
               channel,
               member
             );
+
+            console.log("gotCorrectAnswer", gotCorrectAnswer);
 
             if (gotCorrectAnswer) {
               break;
@@ -126,33 +134,33 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
-async function runQuiz(index, interaction, guild, channel, member) {
+async function runQuiz(
+  index,
+  randomRecord,
+  interaction,
+  guild,
+  channel,
+  member
+) {
   return new Promise(async (resolve) => {
     const quizEmbed = new EmbedBuilder()
       .setColor(`${getRandomColor()}`)
       .setTitle(`\n${getOrdinal(index)} question \n`)
-      .setDescription(`What is the capital of Sweden?`)
+      .setDescription(`${randomRecord.title}`)
       .setFooter({ text: "Time allowed: 8 seconds" });
 
     channel.send({ embeds: [quizEmbed] }).then(async (sentMessage) => {
       const select = new StringSelectMenuBuilder()
         .setCustomId("starter")
-        .setPlaceholder("Select the capital of Sweden")
-        .addOptions(
+        .setPlaceholder(`Select your answer`);
+
+      randomRecord.answers.map((answer) => {
+        select.addOptions(
           new StringSelectMenuOptionBuilder()
-            .setLabel("Stockholm")
-            .setValue("Stockholm"),
-          new StringSelectMenuOptionBuilder().setLabel("Oslo").setValue("Oslo"),
-          new StringSelectMenuOptionBuilder()
-            .setLabel("Helsinki")
-            .setValue("Helsinki"),
-          new StringSelectMenuOptionBuilder()
-            .setLabel("Copenhagen")
-            .setValue("Copenhagen"),
-          new StringSelectMenuOptionBuilder()
-            .setLabel("Reykjavik")
-            .setValue("Reykjavik")
+            .setLabel(answer.answer)
+            .setValue(answer.answer)
         );
+      });
 
       const row = new ActionRowBuilder().addComponents(select);
 
@@ -193,7 +201,10 @@ async function runQuiz(index, interaction, guild, channel, member) {
         const selection = i.values[0];
         await i.reply(`${i.user} has selected ${selection}!`);
 
-        const isCorrect = selection === "Stockholm";
+        const correctAnswer = randomRecord.answers.find(
+          (answer) => answer.correct
+        );
+        const isCorrect = selection === correctAnswer.answer;
         // Create the result embed
         const resultEmbed = new EmbedBuilder()
           .setColor(isCorrect ? "#00ff00" : "#ff0000")
@@ -230,6 +241,7 @@ async function runQuiz(index, interaction, guild, channel, member) {
           await sentMessage.channel
             .send({ embeds: [quizPassEmbed] })
             .catch(console.error);
+          console.log("User got the correct answer!");
           resolve(true);
         }
         resolve(false);
@@ -242,6 +254,7 @@ async function runQuiz(index, interaction, guild, channel, member) {
             `${interaction.user}, you didn't select an answer within 8s!`
           );
           await collector.stop();
+          resolve(false);
         }
 
         clearInterval(progressBarInterval);
@@ -249,8 +262,6 @@ async function runQuiz(index, interaction, guild, channel, member) {
         row.components = [];
         row.addComponents(select);
         await sentMessage.edit({ components: [row] });
-
-        resolve(false);
       });
     });
   });
